@@ -1754,8 +1754,30 @@ fn parse_phylop_auto<R: BufRead>(
 
 /// Build a supplementary annotation .osa file from a source VCF.
 pub fn run_sa_build(source: &str, input: &str, output: &str, assembly: &str) -> Result<()> {
+    // Back-compat shim: the historical entrypoint builds the v1 `.osa` format.
+    run_sa_build_fmt(source, input, output, assembly, "osa")
+}
+
+/// Build a supplementary annotation database in the requested on-disk format.
+///
+/// `format` is `"osa"` (v1 block format) or `"osa2"` (v2 chunked format with
+/// typed parallel value arrays for gnomAD and a whole-record JSON-blob
+/// fallback for other allele-level sources).
+pub fn run_sa_build_fmt(
+    source: &str,
+    input: &str,
+    output: &str,
+    assembly: &str,
+    format: &str,
+) -> Result<()> {
     use fastvep_sa::index::IndexHeader;
     use fastvep_sa::writer::SaWriter;
+
+    match format {
+        "osa" => {}
+        "osa2" => return run_sa_build_v2(source, input, output, assembly),
+        other => anyhow::bail!("Unknown --format {:?} (supported: osa, osa2)", other),
+    }
 
     // Gene-level sources (.oga) — dispatched separately from variant-level (.osa).
     if matches!(source, "omim" | "gnomad_genes" | "gnomad_gene" | "clinvar_protein") {
@@ -1947,24 +1969,7 @@ pub fn run_sa_build(source: &str, input: &str, output: &str, assembly: &str) -> 
         return Ok(());
     }
 
-    let records = match source {
-        "clinvar" => fastvep_sa::sources::clinvar::parse_clinvar_vcf(buf_reader, &chrom_map)?,
-        "gnomad" => fastvep_sa::sources::gnomad::parse_gnomad_vcf(buf_reader, &chrom_map)?,
-        "dbsnp" => fastvep_sa::sources::dbsnp::parse_dbsnp_vcf(buf_reader, &chrom_map)?,
-        "cosmic" => fastvep_sa::sources::cosmic::parse_cosmic_vcf(buf_reader, &chrom_map)?,
-        "onekg" | "1000g" => fastvep_sa::sources::onekg::parse_onekg_vcf(buf_reader, &chrom_map)?,
-        "topmed" => fastvep_sa::sources::topmed::parse_topmed_vcf(buf_reader, &chrom_map)?,
-        "mitomap" => fastvep_sa::sources::mitomap::parse_mitomap(buf_reader, &chrom_map)?,
-        // PhyloP supports two on-disk formats: UCSC fixed-step wig and
-        // simple TSV (`chrom\tpos\tscore`). Auto-detect by peeking the
-        // first non-comment byte: wigfix starts with "fixedStep".
-        "phylop" => parse_phylop_auto(buf_reader, &chrom_map)?,
-        "gerp" | "dann" => fastvep_sa::sources::scores::parse_score_tsv(buf_reader, &chrom_map, false)?,
-        "revel" => fastvep_sa::sources::revel::parse_revel(buf_reader, &chrom_map, 2)?,
-        "primateai" => fastvep_sa::sources::primateai::parse_primateai(buf_reader, &chrom_map)?,
-        "dbnsfp" => fastvep_sa::sources::dbnsfp::parse_dbnsfp(buf_reader, &chrom_map)?,
-        _ => unreachable!(),
-    };
+    let records = parse_variant_records(source, buf_reader, &chrom_map)?;
 
     eprintln!("Parsed {} records from {}", records.len(), source);
 
@@ -1978,6 +1983,151 @@ pub fn run_sa_build(source: &str, input: &str, output: &str, assembly: &str) -> 
         output_path.with_extension("osa.idx").display()
     );
 
+    Ok(())
+}
+
+/// Dispatch a variant-level source to its v1 `AnnotationRecord` parser.
+/// Shared by the v1 `.osa` builder and the v2 `.osa2` JSON-blob fallback.
+fn parse_variant_records<R: BufRead>(
+    source: &str,
+    reader: R,
+    chrom_map: &HashMap<String, u16>,
+) -> Result<Vec<fastvep_sa::common::AnnotationRecord>> {
+    Ok(match source {
+        "clinvar" => fastvep_sa::sources::clinvar::parse_clinvar_vcf(reader, chrom_map)?,
+        "gnomad" => fastvep_sa::sources::gnomad::parse_gnomad_vcf(reader, chrom_map)?,
+        "dbsnp" => fastvep_sa::sources::dbsnp::parse_dbsnp_vcf(reader, chrom_map)?,
+        "cosmic" => fastvep_sa::sources::cosmic::parse_cosmic_vcf(reader, chrom_map)?,
+        "onekg" | "1000g" => fastvep_sa::sources::onekg::parse_onekg_vcf(reader, chrom_map)?,
+        "topmed" => fastvep_sa::sources::topmed::parse_topmed_vcf(reader, chrom_map)?,
+        "mitomap" => fastvep_sa::sources::mitomap::parse_mitomap(reader, chrom_map)?,
+        // PhyloP supports two on-disk formats: UCSC fixed-step wig and simple
+        // TSV (`chrom\tpos\tscore`). Auto-detect by peeking the first bytes.
+        "phylop" => parse_phylop_auto(reader, chrom_map)?,
+        "gerp" | "dann" => fastvep_sa::sources::scores::parse_score_tsv(reader, chrom_map, false)?,
+        "revel" => fastvep_sa::sources::revel::parse_revel(reader, chrom_map, 2)?,
+        "primateai" => fastvep_sa::sources::primateai::parse_primateai(reader, chrom_map)?,
+        "dbnsfp" => fastvep_sa::sources::dbnsfp::parse_dbnsfp(reader, chrom_map)?,
+        other => anyhow::bail!("No variant-record parser for source '{}'", other),
+    })
+}
+
+/// Metadata mirror for the v2 `.osa2` JSON-blob fallback. The v1 `IndexHeader`
+/// match in `run_sa_build_fmt` remains the source of truth; this carries the
+/// subset `Osa2Metadata` needs for allele-level sources.
+struct VariantSourceMeta {
+    json_key: &'static str,
+    name: &'static str,
+    match_by_allele: bool,
+    is_array: bool,
+    is_positional: bool,
+}
+
+fn variant_source_meta(source: &str) -> Option<VariantSourceMeta> {
+    let m = |json_key, name, match_by_allele, is_array| {
+        Some(VariantSourceMeta { json_key, name, match_by_allele, is_array, is_positional: false })
+    };
+    match source {
+        "clinvar" => m("clinvar", "ClinVar", true, true),
+        "dbsnp" => m("dbsnp", "dbSNP", true, false),
+        "cosmic" => m("cosmic", "COSMIC", true, false),
+        "onekg" | "1000g" => m("oneKg", "1000 Genomes", true, false),
+        "topmed" => m("topmed", "TOPMed", true, false),
+        "mitomap" => m("mitomap", "MitoMap", true, false),
+        "revel" => m("revel", "REVEL", true, false),
+        "primateai" => m("primateAI", "PrimateAI", true, false),
+        "dbnsfp" => m("dbnsfp", "dbNSFP", true, false),
+        _ => None,
+    }
+}
+
+/// Build a v2 `.osa2` database. gnomAD uses the typed parallel-array path; the
+/// other allele-level sources reuse their v1 parser and store each record's
+/// JSON object as a whole-record blob.
+fn run_sa_build_v2(source: &str, input: &str, output: &str, assembly: &str) -> Result<()> {
+    use fastvep_sa::fields::{Field, FieldType};
+    use fastvep_sa::writer_v2::{Osa2Metadata, Osa2Record, Osa2Writer};
+
+    if matches!(source, "omim" | "gnomad_genes" | "gnomad_gene" | "clinvar_protein") {
+        anyhow::bail!(
+            "--format osa2 is variant-level only; gene source '{}' builds a .oga — use --format osa",
+            source
+        );
+    }
+    if source == "spliceai" {
+        anyhow::bail!("--format osa2 is not yet supported for spliceai; use --format osa");
+    }
+
+    let (chrom_list, chrom_map) = standard_chrom_map();
+    let output_path = Path::new(output).with_extension("osa2");
+    eprintln!("Building {} .osa2 from: {}", source, input);
+
+    let reader = open_vcf_input_reader(input)?;
+    let buf_reader = io::BufReader::new(reader);
+
+    let (metadata, fields, records) = if source == "gnomad" {
+        let fields = fastvep_sa::sources::gnomad_v2::gnomad_fields();
+        let metadata = fastvep_sa::sources::gnomad_v2::gnomad_metadata(assembly);
+        let records = fastvep_sa::sources::gnomad_v2::parse_gnomad_to_osa2(buf_reader, &fields)?;
+        (metadata, fields, records)
+    } else {
+        // Fallback for allele-level sources without a typed schema: reuse the
+        // v1 parser and store each record's JSON object verbatim as a single
+        // whole-record blob (reconstruct_json returns it un-nested).
+        let meta = variant_source_meta(source).ok_or_else(|| {
+            anyhow::anyhow!(
+                "--format osa2 not supported for source '{}'. Supported: gnomad, clinvar, dbsnp, cosmic, onekg, topmed, mitomap, revel, primateai, dbnsfp",
+                source
+            )
+        })?;
+        let v1_records = parse_variant_records(source, buf_reader, &chrom_map)?;
+        let blob_field = Field {
+            field: meta.json_key.to_string(),
+            alias: meta.json_key.to_string(),
+            ftype: FieldType::JsonBlob,
+            multiplier: 1,
+            zigzag: false,
+            missing_value: u32::MAX,
+            missing_string: ".".into(),
+            description: format!("{} annotation JSON", meta.name),
+        };
+        let metadata = Osa2Metadata {
+            format_version: 2,
+            name: meta.name.to_string(),
+            version: "latest".to_string(),
+            assembly: assembly.to_string(),
+            json_key: meta.json_key.to_string(),
+            match_by_allele: meta.match_by_allele,
+            is_array: meta.is_array,
+            is_positional: meta.is_positional,
+            chunk_bits: 20,
+            description: format!("{} annotations for {}", meta.name, assembly),
+        };
+        let records = v1_records
+            .into_iter()
+            .map(|r| Osa2Record {
+                chrom: chrom_list
+                    .get(r.chrom_idx as usize)
+                    .cloned()
+                    .unwrap_or_else(|| r.chrom_idx.to_string()),
+                position: r.position,
+                ref_allele: r.ref_allele.into_bytes(),
+                alt_allele: r.alt_allele.into_bytes(),
+                values: Vec::new(),
+                json_blob: Some(r.json),
+            })
+            .collect::<Vec<_>>();
+        (metadata, vec![blob_field], records)
+    };
+
+    eprintln!("Parsed {} records from {}", records.len(), source);
+
+    let writer = Osa2Writer::new(metadata, fields);
+    let file = File::create(&output_path)
+        .with_context(|| format!("Creating {}", output_path.display()))?;
+    writer.write_all(file, &records)?;
+
+    eprintln!("Wrote: {}", output_path.display());
     Ok(())
 }
 

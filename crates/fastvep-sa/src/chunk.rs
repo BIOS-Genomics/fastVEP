@@ -65,6 +65,19 @@ impl Chunk {
         fields: &[Field],
         strings: &[Vec<String>],
     ) -> String {
+        // Whole-record JSON blob: a config of exactly one JsonBlob field stores
+        // the complete annotation object verbatim (the `.osa2` json_blob
+        // fallback for sources without a typed schema). Return it directly
+        // rather than nesting it under the field alias.
+        if fields.len() == 1 && fields[0].ftype == FieldType::JsonBlob {
+            return self
+                .json_blobs
+                .as_ref()
+                .and_then(|blobs| blobs.get(idx))
+                .filter(|blob| !blob.is_empty())
+                .cloned()
+                .unwrap_or_else(|| "{}".to_string());
+        }
         let mut parts = Vec::with_capacity(fields.len());
         let mut value_idx: usize = 0;
 
@@ -155,6 +168,28 @@ mod tests {
         let mut decoded = encoded;
         delta_decode(&mut decoded);
         assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn test_reconstruct_json_single_whole_record_blob() {
+        use crate::fields::{Field, FieldType};
+        let fields = vec![Field {
+            field: "clinvar".into(), alias: "clinvar".into(), ftype: FieldType::JsonBlob,
+            multiplier: 1, zigzag: false, missing_value: u32::MAX,
+            missing_string: ".".into(), description: String::new(),
+        }];
+        let mut chunk = Chunk::empty();
+        // A single whole-record blob must be returned verbatim, NOT nested
+        // under the field alias (`{"clinvar":{...}}` would double-wrap once the
+        // output layer places it under the source's json_key).
+        chunk.json_blobs = Some(vec![r#"{"significance":["Pathogenic"]}"#.to_string()]);
+        assert_eq!(
+            chunk.reconstruct_json(0, &fields, &[]),
+            r#"{"significance":["Pathogenic"]}"#
+        );
+        // An empty/missing blob reconstructs to an empty object.
+        chunk.json_blobs = Some(vec![String::new()]);
+        assert_eq!(chunk.reconstruct_json(0, &fields, &[]), "{}");
     }
 
     #[test]

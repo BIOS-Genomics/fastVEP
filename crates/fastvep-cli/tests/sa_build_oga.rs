@@ -4,7 +4,7 @@
 //! `run_sa_build` (the same entrypoint the CLI uses), and reads the resulting
 //! database back to confirm the round-trip.
 
-use fastvep_cli::pipeline::{run_annotate, run_sa_build, AnnotateConfig};
+use fastvep_cli::pipeline::{run_annotate, run_sa_build, run_sa_build_fmt, AnnotateConfig};
 use fastvep_sa::gene::GeneIndex;
 use std::fs::{self, File};
 use std::io::Write;
@@ -996,4 +996,147 @@ fn intergenic_variant_with_sa_dir_in_default_mode_emits_fv_clinvar() {
         "intergenic variant should still emit CSQ: {}",
         data_row
     );
+}
+
+#[test]
+fn sa_build_gnomad_osa2_round_trips_through_annotate() {
+    // Phase 0 (BIOS-76): `sa-build --format osa2` for gnomAD must produce an
+    // .osa2 that `annotate` discovers and reads back to the identical FV_GNOMAD
+    // pipe as the v1 .osa path — including matching the input VCF's bare "1"
+    // chromosome naming (writer + reader canonicalize the "chr" prefix).
+    let tmp = tempfile::tempdir().unwrap();
+    let gnomad_source = tmp.path().join("gnomad-mini.vcf");
+    let input_vcf = tmp.path().join("input.vcf");
+    let gff3 = tmp.path().join("mini.gff3");
+    let output_base = tmp.path().join("gnomad-mini");
+    let output_vcf = tmp.path().join("annotated.vcf");
+    let transcript_cache = tmp.path().join("mini.fastvep.cache");
+
+    fs::write(&gnomad_source, GNOMAD_SOURCE_VCF).unwrap();
+    fs::write(&input_vcf, INPUT_NO_SPLICEAI_INFO_VCF).unwrap();
+    fs::write(&gff3, MINI_GFF3).unwrap();
+
+    run_sa_build_fmt(
+        "gnomad",
+        gnomad_source.to_str().unwrap(),
+        output_base.to_str().unwrap(),
+        "GRCh38",
+        "osa2",
+    )
+    .unwrap();
+
+    // The v2 builder writes a single .osa2 — no .osa / .osa.idx pair.
+    assert!(
+        output_base.with_extension("osa2").exists(),
+        ".osa2 file should be written"
+    );
+    assert!(
+        !output_base.with_extension("osa").exists(),
+        "v2 build must not write a v1 .osa"
+    );
+
+    run_annotate(AnnotateConfig {
+        input: input_vcf.to_string_lossy().into_owned(),
+        output: output_vcf.to_string_lossy().into_owned(),
+        gff3: Some(gff3.to_string_lossy().into_owned()),
+        fasta: None,
+        output_format: "vcf".into(),
+        pick: false,
+        hgvs: false,
+        distance: 0,
+        cache_dir: None,
+        transcript_cache: Some(transcript_cache.to_string_lossy().into_owned()),
+        sa_dir: Some(tmp.path().to_string_lossy().into_owned()),
+        sa_only: false,
+        acmg: false,
+        acmg_config: None,
+        proband: None,
+        mother: None,
+        father: None,
+    })
+    .unwrap();
+
+    let annotated = fs::read_to_string(output_vcf).unwrap();
+    assert!(
+        annotated.contains("##INFO=<ID=FV_GNOMAD,Number=.,Type=String"),
+        "{annotated}"
+    );
+    assert!(
+        annotated.contains("FV_GNOMAD=G|0.00012|12|100000|0|0.00021"),
+        "osa2 gnomAD must project identically to the v1 .osa path:\n{annotated}"
+    );
+    assert!(!annotated.contains("FV_GNOMAD={"), "{annotated}");
+}
+
+#[test]
+fn sa_build_clinvar_osa2_fallback_round_trips() {
+    // Phase 0 (BIOS-76): sources without a typed schema build .osa2 via the
+    // whole-record JSON-blob fallback. ClinVar must annotate identically to its
+    // v1 .osa, proving the single-blob reconstruct_json path + chrom canonical.
+    let tmp = tempfile::tempdir().unwrap();
+    let clinvar_source = tmp.path().join("clinvar-mini.vcf");
+    let clinvar_base = tmp.path().join("clinvar-mini");
+    let input_vcf = tmp.path().join("input.vcf");
+    let output_vcf = tmp.path().join("annotated.vcf");
+
+    fs::write(
+        &clinvar_source,
+        "##fileformat=VCFv4.1\n\
+         ##INFO=<ID=CLNSIG,Number=.,Type=String>\n\
+         ##INFO=<ID=CLNREVSTAT,Number=.,Type=String>\n\
+         ##INFO=<ID=CLNDN,Number=.,Type=String>\n\
+         ##INFO=<ID=CLNVC,Number=.,Type=String>\n\
+         ##INFO=<ID=CLNVCSO,Number=.,Type=String>\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+         1\t25000\trs1\tA\tG\t.\t.\tCLNSIG=Pathogenic;CLNREVSTAT=criteria_provided,_single_submitter;CLNDN=Disease;CLNVC=SNV;CLNVCSO=SO:0001483\n",
+    )
+    .unwrap();
+    fs::write(&input_vcf, INPUT_NO_SPLICEAI_INFO_VCF).unwrap();
+
+    run_sa_build_fmt(
+        "clinvar",
+        clinvar_source.to_str().unwrap(),
+        clinvar_base.to_str().unwrap(),
+        "GRCh38",
+        "osa2",
+    )
+    .unwrap();
+    assert!(
+        clinvar_base.with_extension("osa2").exists(),
+        ".osa2 file should be written"
+    );
+
+    run_annotate(AnnotateConfig {
+        input: input_vcf.to_string_lossy().into_owned(),
+        output: output_vcf.to_string_lossy().into_owned(),
+        gff3: None,
+        fasta: None,
+        output_format: "vcf".into(),
+        pick: false,
+        hgvs: false,
+        distance: 0,
+        cache_dir: None,
+        transcript_cache: None,
+        sa_dir: Some(tmp.path().to_string_lossy().into_owned()),
+        sa_only: true,
+        acmg: false,
+        acmg_config: None,
+        proband: None,
+        mother: None,
+        father: None,
+    })
+    .unwrap();
+
+    let annotated = fs::read_to_string(output_vcf).unwrap();
+    assert!(
+        annotated.contains("FV_CLINVAR=G|Pathogenic"),
+        "osa2 clinvar JSON-blob fallback must project FV_CLINVAR:\n{annotated}"
+    );
+    // The whole-record blob must survive un-nested: the phenotype (PHENOTYPES
+    // pipe field) is part of the same object the fallback stored.
+    assert!(
+        annotated.contains("Disease"),
+        "fallback must round-trip the full clinvar object (phenotype):\n{annotated}"
+    );
+    assert!(!annotated.contains("FV_CLINVAR={"), "{annotated}");
 }

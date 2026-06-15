@@ -7,7 +7,7 @@ use crate::chunk::{delta_decode, Chunk};
 use crate::fields::{Field, FieldType};
 use crate::kmer16::LongVariant;
 use crate::var32;
-use crate::writer_v2::{read_u32_array, Osa2Metadata};
+use crate::writer_v2::{canonical_chrom, read_u32_array, Osa2Metadata};
 use anyhow::{Context, Result};
 use lru::LruCache;
 use fastvep_cache::annotation::{AnnotationProvider, AnnotationValue, SaMetadata};
@@ -232,6 +232,7 @@ impl Osa2Reader {
 
     /// Query a variant in the loaded chunks.
     fn query(&self, chrom: &str, pos: u32, ref_allele: &[u8], alt_allele: &[u8]) -> Result<Option<String>> {
+        let chrom = canonical_chrom(chrom);
         let chunk_id = pos >> self.metadata.chunk_bits;
         let cache_key = format!("{}/{}", chrom, chunk_id);
 
@@ -331,6 +332,7 @@ impl AnnotationProvider for Osa2Reader {
     }
 
     fn preload(&self, chrom: &str, positions: &[u64]) -> Result<()> {
+        let chrom = canonical_chrom(chrom);
         if positions.is_empty() {
             return Ok(());
         }
@@ -352,5 +354,101 @@ impl AnnotationProvider for Osa2Reader {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::writer_v2::{Osa2Record, Osa2Writer};
+
+    fn meta(json_key: &str, is_array: bool) -> Osa2Metadata {
+        Osa2Metadata {
+            format_version: 2,
+            name: "T".into(),
+            version: "v".into(),
+            assembly: "GRCh38".into(),
+            json_key: json_key.into(),
+            match_by_allele: true,
+            is_array,
+            is_positional: false,
+            chunk_bits: 20,
+            description: String::new(),
+        }
+    }
+
+    fn write_db(path: &std::path::Path, metadata: Osa2Metadata, fields: Vec<Field>, records: &[Osa2Record]) {
+        let file = File::create(path).unwrap();
+        Osa2Writer::new(metadata, fields).write_all(file, records).unwrap();
+    }
+
+    #[test]
+    fn osa2_round_trip_is_chrom_naming_agnostic() {
+        // The writer stores a "chr1" record; the reader must find it whether
+        // the query uses "chr1" or the bare "1" — parity with the v1 .osa
+        // format, which is naming-agnostic via its numeric chromosome index.
+        let fields = vec![Field {
+            field: "AF".into(), alias: "allAf".into(), ftype: FieldType::Float,
+            multiplier: 2_000_000, zigzag: false, missing_value: u32::MAX,
+            missing_string: ".".into(), description: String::new(),
+        }];
+        let af = fields[0].encode_float(0.001);
+        let records = vec![Osa2Record {
+            chrom: "chr1".into(), position: 12345,
+            ref_allele: b"A".to_vec(), alt_allele: b"G".to_vec(),
+            values: vec![af], json_blob: None,
+        }];
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("t.osa2");
+        write_db(&path, meta("t", false), fields, &records);
+
+        let reader = Osa2Reader::open(&path).unwrap();
+        assert!(
+            reader.annotate_position("1", 12345, "A", "G").unwrap().is_some(),
+            "bare '1' query must match a chr1-built database"
+        );
+        assert!(
+            reader.annotate_position("chr1", 12345, "A", "G").unwrap().is_some(),
+            "chr-prefixed query must match too"
+        );
+        assert!(
+            reader.annotate_position("1", 99999, "A", "G").unwrap().is_none(),
+            "a different position must miss"
+        );
+    }
+
+    #[test]
+    fn osa2_whole_record_json_blob_round_trips_unnested() {
+        // The single whole-record JsonBlob fallback must reconstruct the stored
+        // object verbatim, so the output layer can place it under the source's
+        // json_key without double-nesting.
+        let blob = r#"{"significance":["Pathogenic"],"phenotypes":["Disease"]}"#;
+        let fields = vec![Field {
+            field: "clinvar".into(), alias: "clinvar".into(), ftype: FieldType::JsonBlob,
+            multiplier: 1, zigzag: false, missing_value: u32::MAX,
+            missing_string: ".".into(), description: String::new(),
+        }];
+        let records = vec![Osa2Record {
+            chrom: "1".into(), position: 25000,
+            ref_allele: b"A".to_vec(), alt_allele: b"G".to_vec(),
+            values: Vec::new(), json_blob: Some(blob.to_string()),
+        }];
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("clinvar.osa2");
+        write_db(&path, meta("clinvar", true), fields, &records);
+
+        let reader = Osa2Reader::open(&path).unwrap();
+        let got = reader
+            .annotate_position("1", 25000, "A", "G")
+            .unwrap()
+            .expect("variant must be found");
+        let json = match got {
+            AnnotationValue::Json(j) => j,
+            AnnotationValue::Positional(j) => j,
+            AnnotationValue::Interval(v) => v.join(","),
+        };
+        assert_eq!(json, blob);
     }
 }

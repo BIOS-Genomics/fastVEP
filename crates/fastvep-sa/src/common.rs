@@ -106,3 +106,48 @@ pub struct GeneRecord {
     /// Pre-serialized JSON annotation string.
     pub json: String,
 }
+
+/// A parsed VCF `FILTER` column (column 7, 0-based index 6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcfFilter {
+    /// Whether the site passed all filters. VCF uses `PASS` for sites that
+    /// passed and `.` when no filtering was applied; both are treated as
+    /// passing. Any other token (e.g. gnomAD's `AC0`, `AS_VQSR`,
+    /// `InbreedingCoeff`) is a failure. Callers that need stricter,
+    /// source-specific gating can inspect [`VcfFilter::raw`] directly.
+    pub pass: bool,
+    /// The raw `FILTER` string exactly as it appeared in the VCF.
+    pub raw: String,
+}
+
+/// Parse a VCF `FILTER` column value into a [`VcfFilter`].
+///
+/// Phase-0 groundwork shared by the supplementary-annotation source parsers;
+/// gnomAD PASS extraction (BIOS-77) is the first consumer.
+pub fn parse_vcf_filter(filter_col: &str) -> VcfFilter {
+    let raw = filter_col.trim();
+    VcfFilter {
+        pass: raw == "PASS" || raw == ".",
+        raw: raw.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vcf_filter_pass_and_missing_are_passing() {
+        assert!(parse_vcf_filter("PASS").pass);
+        assert!(parse_vcf_filter(".").pass);
+        assert!(parse_vcf_filter("  PASS  ").pass);
+    }
+
+    #[test]
+    fn vcf_filter_flags_are_failing() {
+        let f = parse_vcf_filter("AC0");
+        assert!(!f.pass);
+        assert_eq!(f.raw, "AC0");
+        assert!(!parse_vcf_filter("AS_VQSR;InbreedingCoeff").pass);
+    }
+}

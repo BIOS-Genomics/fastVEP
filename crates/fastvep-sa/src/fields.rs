@@ -284,4 +284,25 @@ mod tests {
         assert_eq!(format_value(&field, 0, Some(&strings)), "\"Benign\"");
         assert_eq!(format_value(&field, 1, Some(&strings)), "\"Pathogenic\"");
     }
+
+    #[test]
+    fn test_faf_small_frequency_round_trip() {
+        // Filtering allele frequencies (faf95/faf99) are small frequencies in
+        // the ~1e-5..1e-2 range and reuse the standard AF Float encoding
+        // (multiplier 2_000_000). Confirm that magnitude round-trips within the
+        // quantization step (~5e-7), far finer than any ACMG threshold.
+        let field = Field {
+            field: "fafmax_faf95_max".into(), alias: "faf95".into(),
+            ftype: FieldType::Float, multiplier: 2_000_000, zigzag: false,
+            missing_value: u32::MAX, missing_string: ".".into(),
+            description: String::new(),
+        };
+        for &original in &[1.23e-5_f64, 1.0e-4, 9.5e-3, 0.0] {
+            let decoded = field.decode_float(field.encode_float(original));
+            assert!(
+                (decoded - original).abs() < 1e-6,
+                "faf {original} round-tripped to {decoded}"
+            );
+        }
+    }
 }

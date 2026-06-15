@@ -133,7 +133,7 @@ enum Commands {
         output: String,
     },
 
-    /// Build a supplementary annotation database (.osa) from a source file
+    /// Build a supplementary annotation database from a source file
     SaBuild {
         /// Source type: clinvar, gnomad, dbsnp
         #[arg(long)]
@@ -143,13 +143,17 @@ enum Commands {
         #[arg(short, long)]
         input: String,
 
-        /// Output base path (will create .osa and .osa.idx)
+        /// Output base path (extension is set from --format)
         #[arg(short, long)]
         output: String,
 
         /// Genome assembly (e.g., GRCh38)
         #[arg(long, default_value = "GRCh38")]
         assembly: String,
+
+        /// On-disk format: "osa" (v1 block format) or "osa2" (v2 chunked)
+        #[arg(long, default_value = "osa")]
+        format: String,
     },
 
     /// Filter annotated VEP output
@@ -227,8 +231,9 @@ fn main() -> Result<()> {
             input,
             output,
             assembly,
+            format,
         } => {
-            pipeline::run_sa_build(&source, &input, &output, &assembly)?;
+            pipeline::run_sa_build_fmt(&source, &input, &output, &assembly, &format)?;
         }
         Commands::Filter {
             input,

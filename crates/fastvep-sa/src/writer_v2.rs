@@ -37,6 +37,15 @@ pub struct Osa2Record {
     pub json_blob: Option<String>,
 }
 
+/// Canonical chromosome key for `.osa2` chunk paths: strips a leading `chr`
+/// so a database and a query match whether either side uses `chr1` or `1`.
+/// The v1 `.osa` format is naming-agnostic via its numeric chromosome index;
+/// this brings the v2 format to parity. Both the writer (chunk grouping) and
+/// the reader (query/preload) route chromosome names through this function.
+pub fn canonical_chrom(chrom: &str) -> &str {
+    chrom.strip_prefix("chr").unwrap_or(chrom)
+}
+
 /// Builds an .osa2 file from sorted records.
 pub struct Osa2Writer {
     metadata: Osa2Metadata,
@@ -96,10 +105,14 @@ impl Osa2Writer {
 
         for (ri, record) in records.iter().enumerate() {
             let cid = record.position >> chunk_bits;
-            let key = (record.chrom.clone(), cid);
+            // Canonicalize chrom (strip "chr") so the on-disk chunk path matches
+            // regardless of the source's naming; the reader normalizes queries
+            // the same way.
+            let canon = canonical_chrom(&record.chrom).to_string();
+            let key = (canon.clone(), cid);
 
             if current_key.as_ref() != Some(&key) {
-                chunks.push((record.chrom.clone(), cid, Vec::new()));
+                chunks.push((canon, cid, Vec::new()));
                 current_key = Some(key);
             }
             chunks.last_mut().unwrap().2.push(ri);
@@ -252,5 +265,13 @@ mod tests {
         write_u32_array(&mut buf, &values).unwrap();
         let decoded = read_u32_array(&buf).unwrap();
         assert_eq!(decoded, values);
+    }
+
+    #[test]
+    fn test_canonical_chrom_strips_prefix() {
+        assert_eq!(canonical_chrom("chr1"), "1");
+        assert_eq!(canonical_chrom("1"), "1");
+        assert_eq!(canonical_chrom("chrX"), "X");
+        assert_eq!(canonical_chrom("MT"), "MT");
     }
 }
