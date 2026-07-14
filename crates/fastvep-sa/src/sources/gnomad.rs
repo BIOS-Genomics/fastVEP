@@ -15,6 +15,9 @@
 //! Some locally-processed files expose simple per-population fields with a
 //! hyphen separator (`AF-afr`). The parser detects and handles this case.
 //!
+//! The v4.1 joint VCF also carries per-callset totals `AN_exomes` / `AN_genomes`
+//! alongside the combined `AN_joint`; these are emitted as `exomeAn` / `genomeAn`.
+//!
 //! We pick the scheme by scanning `##INFO=<ID=...>` header lines.
 
 use crate::common::AnnotationRecord;
@@ -48,6 +51,10 @@ struct FieldNames {
     af: String,
     an: String,
     ac: String,
+    /// Per-callset observed allele number (v4.1 joint VCF only). `None` for the
+    /// standard single-callset schemes, which have no exomes/genomes split.
+    an_exomes: Option<String>,
+    an_genomes: Option<String>,
     nhomalt: String,
     /// Format string for per-population AF, with `{}` substituted for the
     /// population code (e.g., `"AF_{}"` or `"AF_joint_{}"`).
@@ -72,6 +79,8 @@ impl FieldNames {
             af: "AF".into(),
             an: "AN".into(),
             ac: "AC".into(),
+            an_exomes: None,
+            an_genomes: None,
             nhomalt: "nhomalt".into(),
             af_pop_template: "AF_{}".into(),
             grpmax_af: "AF_grpmax".into(),
@@ -89,6 +98,8 @@ impl FieldNames {
             af: "AF_joint".into(),
             an: "AN_joint".into(),
             ac: "AC_joint".into(),
+            an_exomes: Some("AN_exomes".into()),
+            an_genomes: Some("AN_genomes".into()),
             nhomalt: "nhomalt_joint".into(),
             af_pop_template: "AF_joint_{}".into(),
             grpmax_af: "AF_grpmax_joint".into(),
@@ -347,6 +358,23 @@ fn build_gnomad_json(
         parts.push(format!("\"allHc\":{}", nh));
     }
 
+    // Per-callset observed allele number (v4.1 joint VCF only): the AN within
+    // each of the exomes / genomes callsets at this site. Distinct from allAn
+    // (the combined joint AN) and from the separate all-sites AN source; lets a
+    // consumer see which callset actually covered an observed variant. Number=1,
+    // so it does not vary by alt allele. Parsed to an integer so the emitted
+    // JSON stays valid even if the field carries a stray non-numeric token.
+    if let Some(name) = &field_names.an_exomes {
+        if let Some(n) = allele_value(info_map, name, allele_idx).and_then(|v| v.parse::<i64>().ok()) {
+            parts.push(format!("\"exomeAn\":{}", n));
+        }
+    }
+    if let Some(name) = &field_names.an_genomes {
+        if let Some(n) = allele_value(info_map, name, allele_idx).and_then(|v| v.parse::<i64>().ok()) {
+            parts.push(format!("\"genomeAn\":{}", n));
+        }
+    }
+
     // Per-population AFs
     for pop in POPULATIONS {
         let key = field_names.pop_key(pop);
@@ -506,7 +534,7 @@ chr1\t20000\t.\tC\tT,A\t.\tPASS\tAF=0.01,0.005;AN=140000;AC=1400,700;nhomalt=10,
 ##INFO=<ID=AF_joint,Number=A,Type=Float,Description=\"joint AF\">
 ##INFO=<ID=AF_grpmax_joint,Number=A,Type=Float,Description=\"grpmax AF\">
 #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
-chr1\t100\t.\tA\tG\t.\tGENOMES_FILTERED\tAF_joint=1.5e-4;AN_joint=1000000;AC_joint=150;nhomalt_joint=3;AF_joint_afr=2.0e-4;nhomalt_joint_afr=1;AF_grpmax_joint=2.0e-4;grpmax_joint=afr;fafmax_faf95_max_joint=1.0e-4;fafmax_faf99_max_joint=5.0e-5;AF_joint_XX=1.6e-4;not_called_in_exomes
+chr1\t100\t.\tA\tG\t.\tGENOMES_FILTERED\tAF_joint=1.5e-4;AN_joint=1000000;AN_exomes=800000;AN_genomes=200000;AC_joint=150;nhomalt_joint=3;AF_joint_afr=2.0e-4;nhomalt_joint_afr=1;AF_grpmax_joint=2.0e-4;grpmax_joint=afr;fafmax_faf95_max_joint=1.0e-4;fafmax_faf99_max_joint=5.0e-5;AF_joint_XX=1.6e-4;not_called_in_exomes
 ";
         let mut chrom_map = HashMap::new();
         chrom_map.insert("chr1".to_string(), 0u16);
@@ -525,11 +553,38 @@ chr1\t100\t.\tA\tG\t.\tGENOMES_FILTERED\tAF_joint=1.5e-4;AN_joint=1000000;AC_joi
         assert!(j.contains("\"afrHc\":1"), "{j}");
         assert!(j.contains("\"xxAf\":1.600000e-4"), "{j}");
         assert!(j.contains("\"notCalledInExomes\":true"), "{j}");
+        // Per-callset observed AN from the joint VCF (distinct from allAn).
+        assert!(j.contains("\"exomeAn\":800000"), "{j}");
+        assert!(j.contains("\"genomeAn\":200000"), "{j}");
         // Filtered site recorded verbatim (no boolean, no gating).
         assert!(j.contains("\"filter\":\"GENOMES_FILTERED\""), "{j}");
         // Per-pop AC/AN are intentionally not emitted (JSON-only AF + nhomalt).
         assert!(!j.contains("\"afrAc\""), "{j}");
         assert!(!j.contains("\"afrAn\""), "{j}");
+    }
+
+    #[test]
+    fn test_gnomad_standard_scheme_omits_per_callset_an() {
+        // Single-callset (standard) VCFs have no exomes/genomes split, so the
+        // per-callset AN fields are never emitted — an_exomes/an_genomes are
+        // None for the standard scheme.
+        let vcf = "\
+##fileformat=VCFv4.2
+##INFO=<ID=AF,Number=A,Type=Float,Description=\"AF\">
+##INFO=<ID=AN,Number=1,Type=Integer,Description=\"AN\">
+##INFO=<ID=AC,Number=A,Type=Integer,Description=\"AC\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+chr1\t100\t.\tA\tG\t.\tPASS\tAF=0.001;AN=1000;AC=1
+";
+        let mut chrom_map = HashMap::new();
+        chrom_map.insert("chr1".to_string(), 0u16);
+
+        let records = parse_gnomad_vcf(vcf.as_bytes(), &chrom_map).unwrap();
+        assert_eq!(records.len(), 1);
+        let j = &records[0].json;
+        assert!(j.contains("\"allAn\":1000"), "{j}");
+        assert!(!j.contains("\"exomeAn\""), "{j}");
+        assert!(!j.contains("\"genomeAn\""), "{j}");
     }
 
     #[test]
