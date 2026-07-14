@@ -361,16 +361,17 @@ fn build_gnomad_json(
     // Per-callset observed allele number (v4.1 joint VCF only): the AN within
     // each of the exomes / genomes callsets at this site. Distinct from allAn
     // (the combined joint AN) and from the separate all-sites AN source; lets a
-    // consumer see which callset actually covered an observed variant. Number=1,
-    // so it does not vary by alt allele. Parsed to an integer so the emitted
-    // JSON stays valid even if the field carries a stray non-numeric token.
+    // consumer see which callset actually covered an observed variant. These are
+    // Number=1 fields, so — like allAn — we always take the single (first) value
+    // (index 0) rather than indexing by alt allele. Parsed to an integer so the
+    // emitted JSON stays valid even if the field carries a stray non-numeric token.
     if let Some(name) = &field_names.an_exomes {
-        if let Some(n) = allele_value(info_map, name, allele_idx).and_then(|v| v.parse::<i64>().ok()) {
+        if let Some(n) = allele_value(info_map, name, 0).and_then(|v| v.parse::<i64>().ok()) {
             parts.push(format!("\"exomeAn\":{}", n));
         }
     }
     if let Some(name) = &field_names.an_genomes {
-        if let Some(n) = allele_value(info_map, name, allele_idx).and_then(|v| v.parse::<i64>().ok()) {
+        if let Some(n) = allele_value(info_map, name, 0).and_then(|v| v.parse::<i64>().ok()) {
             parts.push(format!("\"genomeAn\":{}", n));
         }
     }
@@ -602,7 +603,7 @@ chr1\t100\t.\tA\tG\t.\tPASS\tAF=0.001;AN=1000;AC=1
 ##INFO=<ID=AF_joint_nfe,Number=A,Type=Float,Description=\"Joint AF NFE\">
 #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
 chr1\t10001\t.\tA\tG\t.\tPASS\tAF_joint=0.001;AN_joint=150000;AC_joint=150;nhomalt_joint=2;AF_joint_afr=0.002;AF_joint_nfe=0.0005
-chr1\t20000\t.\tC\tT,A\t.\tPASS\tAF_joint=0.01,0.005;AN_joint=140000;AC_joint=1400,700;nhomalt_joint=10,3;AF_joint_eas=0.02,0.01
+chr1\t20000\t.\tC\tT,A\t.\tPASS\tAF_joint=0.01,0.005;AN_joint=140000;AN_exomes=112000;AN_genomes=28000;AC_joint=1400,700;nhomalt_joint=10,3;AF_joint_eas=0.02,0.01
 ";
 
         let mut chrom_map = HashMap::new();
@@ -650,6 +651,18 @@ chr1\t20000\t.\tC\tT,A\t.\tPASS\tAF_joint=0.01,0.005;AN_joint=140000;AC_joint=14
         assert!(
             records[2].json.contains("\"allAc\":700"),
             "second alt should pick second AC value: {}",
+            records[2].json
+        );
+        // Per-callset AN is Number=1: both alts of the multiallelic site report
+        // the same single value (index 0), never a per-alt slice.
+        assert!(
+            records[1].json.contains("\"exomeAn\":112000"),
+            "first alt exomeAn: {}",
+            records[1].json
+        );
+        assert!(
+            records[2].json.contains("\"exomeAn\":112000") && records[2].json.contains("\"genomeAn\":28000"),
+            "second alt should still report the single per-callset AN: {}",
             records[2].json
         );
     }
