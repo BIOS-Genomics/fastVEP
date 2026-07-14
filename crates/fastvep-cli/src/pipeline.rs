@@ -2393,6 +2393,17 @@ pub fn run_sa_build(
                 is_positional: true,
             }
         },
+        "gnomad_an_exomes" | "gnomad_an_genomes" => IndexHeader {
+            schema_version: fastvep_sa::common::SCHEMA_VERSION,
+            json_key: source.into(),
+            name: source.to_uppercase().into(),
+            version: "latest".into(),
+            description: format!("gnomAD v4.1 all-sites allele number ({}) for {}", source, assembly),
+            assembly: assembly.into(),
+            match_by_allele: false,
+            is_array: false,
+            is_positional: true,
+        },
         "revel" => IndexHeader {
             schema_version: fastvep_sa::common::SCHEMA_VERSION,
             json_key: "revel".into(),
@@ -2482,7 +2493,7 @@ pub fn run_sa_build(
             is_positional: false,
         },
         _ => anyhow::bail!(
-            "Unknown source: {}. Supported: clinvar, gnomad, dbsnp, cosmic, onekg, topmed, mitomap, phylop, gerp, dann, revel, spliceai, primateai, dbnsfp, omim, gnomad_genes, clinvar_protein, custom_vcf, custom_bed, custom",
+            "Unknown source: {}. Supported: clinvar, gnomad, gnomad_an_exomes, gnomad_an_genomes, dbsnp, cosmic, onekg, topmed, mitomap, phylop, gerp, dann, revel, spliceai, primateai, dbnsfp, omim, gnomad_genes, clinvar_protein, custom_vcf, custom_bed, custom",
             source
         ),
     };
@@ -2515,6 +2526,12 @@ pub fn run_sa_build(
             return run_streaming_sa_build(
                 input, output, header, &chrom_map, &chrom_list, show_progress,
                 |r, m| fastvep_sa::sources::topmed::iter_topmed_vcf(r, m),
+            );
+        }
+        "gnomad_an_exomes" | "gnomad_an_genomes" => {
+            return run_streaming_sa_build(
+                input, output, header, &chrom_map, &chrom_list, show_progress,
+                |r, m| fastvep_sa::sources::gnomad_an::iter_gnomad_an(r, m),
             );
         }
         _ => {}
