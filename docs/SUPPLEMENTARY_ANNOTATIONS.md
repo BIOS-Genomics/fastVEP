@@ -95,6 +95,10 @@ lead with the **gene symbol**.
 - `FV_DBNSFP`: `ALLELE|SIFT|POLYPHEN|ALPHAMISSENSE|BAYESDEL` — `ALPHAMISSENSE` and `BAYESDEL` are calibrated missense pathogenicity scores (numeric); `BAYESDEL` is the no-AF variant (frequency-independent, ACMG-appropriate for PP3/BP4). Both are sourced from dbNSFP.
 - `SpliceAI`: `ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL`
 
+### Positional (JSON-only)
+
+- **gnomAD v4.1 all-sites allele number** — `sa-build --source gnomad_an_exomes` / `gnomad_an_genomes`. Per-**locus** callability, matched by position (not allele), so it is emitted in **JSON only** (no `FV_*` pipe projection). JSON key `gnomad_an_exomes` / `gnomad_an_genomes`; object shape `{"an": <int> [, "outside…Region": <bool>]}`. The AN tells a well-covered locus apart from an uncalled one, so an allele that is absent from the per-variant sites data can still be distinguished from one at an uncovered position. Rows with `AN == 0` are dropped at build time: `AN` counts *called* genotypes, so `AN == 0` means the locus was uncovered — the same signal as a locus absent from the index — while it trims the index to the covered subset. Only `AN == 0` is dropped (a low-but-nonzero AN is kept, so the "well-covered" cutoff stays a consumer decision, not a value baked into the annotation); reversible build-time choice. Source files: `gnomad.{exomes,genomes}.v4.1.allele_number_all_sites.tsv.bgz`.
+
 ### Gene-level
 
 - `FV_OMIM`: `SYMBOL|MIM_NUMBER|PHENOTYPES`

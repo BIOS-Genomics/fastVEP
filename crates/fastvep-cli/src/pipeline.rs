@@ -2393,6 +2393,17 @@ pub fn run_sa_build(
                 is_positional: true,
             }
         },
+        "gnomad_an_exomes" | "gnomad_an_genomes" => IndexHeader {
+            schema_version: fastvep_sa::common::SCHEMA_VERSION,
+            json_key: source.into(),
+            name: source.to_uppercase().into(),
+            version: "latest".into(),
+            description: format!("gnomAD v4.1 all-sites allele number ({}) for {}", source, assembly),
+            assembly: assembly.into(),
+            match_by_allele: false,
+            is_array: false,
+            is_positional: true,
+        },
         "revel" => IndexHeader {
             schema_version: fastvep_sa::common::SCHEMA_VERSION,
             json_key: "revel".into(),
@@ -2482,7 +2493,7 @@ pub fn run_sa_build(
             is_positional: false,
         },
         _ => anyhow::bail!(
-            "Unknown source: {}. Supported: clinvar, gnomad, dbsnp, cosmic, onekg, topmed, mitomap, phylop, gerp, dann, revel, spliceai, primateai, dbnsfp, omim, gnomad_genes, clinvar_protein, custom_vcf, custom_bed, custom",
+            "Unknown source: {}. Supported: clinvar, gnomad, gnomad_an_exomes, gnomad_an_genomes, dbsnp, cosmic, onekg, topmed, mitomap, phylop, gerp, dann, revel, spliceai, primateai, dbnsfp, omim, gnomad_genes, clinvar_protein, custom_vcf, custom_bed, custom",
             source
         ),
     };
@@ -2539,6 +2550,9 @@ pub fn run_sa_build(
         // first non-comment byte: wigfix starts with "fixedStep".
         "phylop" => parse_phylop_auto(buf_reader, &chrom_map)?,
         "gerp" | "dann" => fastvep_sa::sources::scores::parse_score_tsv(buf_reader, &chrom_map, false)?,
+        "gnomad_an_exomes" | "gnomad_an_genomes" => {
+            fastvep_sa::sources::gnomad_an::parse_gnomad_an(buf_reader, &chrom_map)?
+        }
         "revel" => fastvep_sa::sources::revel::parse_revel(buf_reader, &chrom_map, 2)?,
         "primateai" => fastvep_sa::sources::primateai::parse_primateai(buf_reader, &chrom_map)?,
         "dbnsfp" => fastvep_sa::sources::dbnsfp::parse_dbnsfp(buf_reader, &chrom_map)?,

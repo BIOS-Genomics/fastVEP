@@ -6,6 +6,7 @@ pub mod cosmic;
 pub mod dbnsfp;
 pub mod dbsnp;
 pub mod gnomad;
+pub mod gnomad_an;
 pub mod gnomad_gene;
 pub mod mitomap;
 pub mod omim;
