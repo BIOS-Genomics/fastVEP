@@ -2528,6 +2528,12 @@ pub fn run_sa_build(
                 |r, m| fastvep_sa::sources::topmed::iter_topmed_vcf(r, m),
             );
         }
+        "gnomad_an_exomes" | "gnomad_an_genomes" => {
+            return run_streaming_sa_build(
+                input, output, header, &chrom_map, &chrom_list, show_progress,
+                |r, m| fastvep_sa::sources::gnomad_an::iter_gnomad_an(r, m),
+            );
+        }
         _ => {}
     }
 
@@ -2550,9 +2556,6 @@ pub fn run_sa_build(
         // first non-comment byte: wigfix starts with "fixedStep".
         "phylop" => parse_phylop_auto(buf_reader, &chrom_map)?,
         "gerp" | "dann" => fastvep_sa::sources::scores::parse_score_tsv(buf_reader, &chrom_map, false)?,
-        "gnomad_an_exomes" | "gnomad_an_genomes" => {
-            fastvep_sa::sources::gnomad_an::parse_gnomad_an(buf_reader, &chrom_map)?
-        }
         "revel" => fastvep_sa::sources::revel::parse_revel(buf_reader, &chrom_map, 2)?,
         "primateai" => fastvep_sa::sources::primateai::parse_primateai(buf_reader, &chrom_map)?,
         "dbnsfp" => fastvep_sa::sources::dbnsfp::parse_dbnsfp(buf_reader, &chrom_map)?,
