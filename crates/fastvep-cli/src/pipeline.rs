@@ -692,8 +692,10 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                 let allele_annotations: Vec<AlleleAnnotation> = tc
                     .allele_consequences
                     .iter()
-                    .map(|ac| {
+                    .enumerate()
+                    .map(|(allele_index, ac)| {
                         let mut ann = AlleleAnnotation {
+                            allele_num: allele_index + 1,
                             allele: ac.allele.clone(),
                             consequences: ac.consequences.clone(),
                             impact: ac.impact,
@@ -2892,6 +2894,7 @@ mod pick_tests {
             gene_symbol: Some(Arc::from("GENE")),
             biotype: Arc::from(biotype),
             allele_annotations: vec![AlleleAnnotation {
+                allele_num: 1,
                 allele: Allele::from_str("A"),
                 consequences,
                 impact: Impact::Modifier,

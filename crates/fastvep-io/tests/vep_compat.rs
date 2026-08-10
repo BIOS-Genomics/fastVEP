@@ -459,6 +459,7 @@ fn mock_vf_missense() -> VariationFeature {
             gene_symbol: Some("OR4F5".into()),
             biotype: "protein_coding".into(),
             allele_annotations: vec![AlleleAnnotation {
+                allele_num: 1,
                 allele: Allele::from_str("C"),
                 consequences: vec![Consequence::MissenseVariant],
                 impact: Impact::Moderate,
@@ -562,6 +563,7 @@ fn test_csq_frameshift_codon_format() {
             gene_symbol: Some("CHL1".into()),
             biotype: "protein_coding".into(),
             allele_annotations: vec![AlleleAnnotation {
+                allele_num: 1,
                 allele: Allele::Deletion,
                 consequences: vec![Consequence::FrameshiftVariant],
                 impact: Impact::High,
@@ -746,6 +748,7 @@ fn test_csq_frameshift_full_42_field_match() {
             gene_symbol: Some("CHL1".into()),
             biotype: "protein_coding".into(),
             allele_annotations: vec![AlleleAnnotation {
+                allele_num: 1,
                 allele: Allele::Deletion,
                 consequences: vec![Consequence::FrameshiftVariant],
                 impact: Impact::High,
@@ -878,6 +881,7 @@ fn test_csq_downstream_variant_match() {
             gene_symbol: Some("OR4G11P".into()),
             biotype: "transcribed_unprocessed_pseudogene".into(),
             allele_annotations: vec![AlleleAnnotation {
+                allele_num: 1,
                 allele: Allele::from_str("C"),
                 consequences: vec![Consequence::DownstreamGeneVariant],
                 impact: Impact::Modifier,
@@ -968,6 +972,7 @@ fn test_csq_intron_variant_match() {
             gene_symbol: Some("ACP1".into()),
             biotype: "protein_coding".into(),
             allele_annotations: vec![AlleleAnnotation {
+                allele_num: 1,
                 allele: Allele::from_str("T"),
                 consequences: vec![Consequence::IntronVariant],
                 impact: Impact::Modifier,

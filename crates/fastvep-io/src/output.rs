@@ -1491,6 +1491,10 @@ pub fn format_json(vf: &VariationFeature, sa_only: bool) -> serde_json::Value {
                     serde_json::Value::String(aa.allele.to_string()),
                 );
                 tc.insert(
+                    "allele_num".into(),
+                    serde_json::Value::Number(aa.allele_num.into()),
+                );
+                tc.insert(
                     "strand".into(),
                     serde_json::Value::Number(tv.strand.as_int().into()),
                 );
@@ -1788,6 +1792,7 @@ mod tests {
                 gene_symbol: Some(Arc::from("GENE1")),
                 biotype: Arc::from("protein_coding"),
                 allele_annotations: vec![AlleleAnnotation {
+                    allele_num: 1,
                     allele: Allele::from_str("G"),
                     consequences: vec![Consequence::MissenseVariant],
                     impact: Impact::Moderate,
@@ -2104,12 +2109,14 @@ mod tests {
         vf.alt_alleles = vec![Allele::from_str("G"), Allele::from_str("T")];
         vf.allele_string = "A/G/T".into();
         let mut tv_g = base_tv.clone();
+        tv_g.allele_annotations[0].allele_num = 1;
         tv_g.allele_annotations[0].allele = Allele::from_str("G");
         tv_g.allele_annotations[0].supplementary = vec![(
             "clinvar".into(),
             r#"{"significance":["Pathogenic"],"reviewStatus":"","phenotypes":[],"variantClass":"SNV","soAccession":""}"#.into(),
         )];
         let mut tv_t = base_tv.clone();
+        tv_t.allele_annotations[0].allele_num = 2;
         tv_t.allele_annotations[0].allele = Allele::from_str("T");
         tv_t.allele_annotations[0].supplementary = vec![(
             "clinvar".into(),
@@ -2130,6 +2137,34 @@ mod tests {
             "second row should carry the ALT-T clinvar value: {}",
             lines[1]
         );
+    }
+
+    #[test]
+    fn json_emits_one_based_alt_ordinals_for_multiallelic_annotations() {
+        let mut vf = projection_test_variant();
+        vf.alt_alleles = vec![Allele::from_str("G"), Allele::from_str("T")];
+        vf.allele_string = "A/G/T".into();
+
+        let mut second = vf.transcript_variations[0].allele_annotations[0].clone();
+        second.allele_num = 2;
+        second.allele = Allele::from_str("T");
+        vf.transcript_variations[0]
+            .allele_annotations
+            .push(second);
+
+        let json = format_json(&vf, false);
+        let consequences = json["transcript_consequences"].as_array().unwrap();
+        let observed: Vec<(&str, u64)> = consequences
+            .iter()
+            .map(|row| {
+                (
+                    row["variant_allele"].as_str().unwrap(),
+                    row["allele_num"].as_u64().unwrap(),
+                )
+            })
+            .collect();
+
+        assert_eq!(observed, vec![("G", 1), ("T", 2)]);
     }
 
     #[test]
