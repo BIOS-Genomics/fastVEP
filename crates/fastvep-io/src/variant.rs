@@ -79,6 +79,15 @@ pub struct TranscriptVariation {
 /// Annotation for a specific allele against a specific transcript.
 #[derive(Debug, Clone)]
 pub struct AlleleAnnotation {
+    /// One-based index into the VCF record's ordered ALT allele set.
+    ///
+    /// A VCF row describes a jointly genotyped site, so one row can carry
+    /// several biological alternate alleles. Consequence output flattens those
+    /// alleles across transcripts, but normalized allele strings are not a safe
+    /// way to reconstruct which original ALT produced a row: indels can change
+    /// spelling and coordinates during normalization. Keeping the VCF ordinal
+    /// makes that relationship explicit and lossless for downstream consumers.
+    pub allele_num: usize,
     pub allele: Allele,
     pub consequences: Vec<Consequence>,
     pub impact: Impact,

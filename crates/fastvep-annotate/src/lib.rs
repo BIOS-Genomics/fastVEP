@@ -320,8 +320,10 @@ impl AnnotationContext {
                     let allele_annotations: Vec<AlleleAnnotation> = tc
                         .allele_consequences
                         .iter()
-                        .map(|ac| {
+                        .enumerate()
+                        .map(|(allele_index, ac)| {
                             let mut ann = AlleleAnnotation {
+                                allele_num: allele_index + 1,
                                 allele: ac.allele.clone(),
                                 consequences: ac.consequences.clone(),
                                 impact: ac.impact,
@@ -746,13 +748,14 @@ impl AnnotationContext {
 /// per alt allele with empty consequences so the SA attachment loop has a
 /// slot to populate while emitting no default-CSQ annotation.
 pub fn annotate_sa_only_scaffold(vf: &mut VariationFeature) {
-    for alt in &vf.alt_alleles {
+    for (allele_index, alt) in vf.alt_alleles.iter().enumerate() {
         vf.transcript_variations.push(TranscriptVariation {
             transcript_id: "-".into(),
             gene_id: "-".into(),
             gene_symbol: None,
             biotype: "-".into(),
             allele_annotations: vec![AlleleAnnotation {
+                allele_num: allele_index + 1,
                 allele: alt.clone(),
                 consequences: vec![],
                 impact: fastvep_core::Impact::Modifier,
@@ -792,13 +795,14 @@ pub fn annotate_sa_only_scaffold(vf: &mut VariationFeature) {
 }
 
 pub fn annotate_intergenic(vf: &mut VariationFeature) {
-    for alt in &vf.alt_alleles {
+    for (allele_index, alt) in vf.alt_alleles.iter().enumerate() {
         vf.transcript_variations.push(TranscriptVariation {
             transcript_id: "-".into(),
             gene_id: "-".into(),
             gene_symbol: None,
             biotype: "-".into(),
             allele_annotations: vec![AlleleAnnotation {
+                allele_num: allele_index + 1,
                 allele: alt.clone(),
                 consequences: vec![Consequence::IntergenicVariant],
                 impact: fastvep_core::Impact::Modifier,
